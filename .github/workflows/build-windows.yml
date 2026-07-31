@@ -1,0 +1,83 @@
+name: Build Windows CLI (paste-fix)
+
+# Builds xai-grok-pager → grok.exe from this tree (includes paste payload offload).
+# Windows runners have 16GB RAM — enough for xai-grok-shell.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/codegen/xai-grok-pager/**"
+      - "crates/codegen/xai-ratatui-textarea/**"
+      - "crates/codegen/xai-grok-pager-bin/**"
+      - "crates/codegen/xai-grok-shell/**"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64 release
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify protoc
+        shell: bash
+        run: |
+          protoc --version
+          which protoc
+          echo "PROTOC=$(which protoc)" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          shared-key: "win-pager-bin"
+
+      - name: Build release binary
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: always
+        run: |
+          set -euo pipefail
+          export PROTOC="$(command -v protoc)"
+          echo "Using PROTOC=$PROTOC"
+          cargo build -p xai-grok-pager-bin --release
+          ls -lah target/release/xai-grok-pager.exe
+          # Official installs ship as "grok"
+          cp target/release/xai-grok-pager.exe target/release/grok.exe
+          # Metadata
+          {
+            echo "source_rev=$(cat SOURCE_REV 2>/dev/null || echo unknown)"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "package=xai-grok-pager-bin"
+            echo "fix=paste-payload-offload (PR #2)"
+          } > target/release/BUILD_INFO.txt
+
+      - name: Upload grok.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok-windows-x64-paste-fix
+          path: |
+            target/release/grok.exe
+            target/release/xai-grok-pager.exe
+            target/release/BUILD_INFO.txt
+          if-no-files-found: error
+          retention-days: 30
