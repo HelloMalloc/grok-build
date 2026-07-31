@@ -1,7 +1,5 @@
-name: Build Windows CLI
+name: Build Windows CLI (paste-fix)
 
-# Compiles HelloMalloc/grok-build (incl. paste-payload-offload fix) on a real
-# Windows runner so we get a native grok.exe with the clipboard/paste fix.
 on:
   workflow_dispatch:
   push:
@@ -11,6 +9,7 @@ on:
       - "crates/codegen/xai-ratatui-textarea/**"
       - "crates/codegen/xai-grok-pager-bin/**"
       - "crates/codegen/xai-grok-shell/**"
+      - "crates/build/xai-proto-build/**"
       - ".github/workflows/build-windows.yml"
 
 permissions:
@@ -21,10 +20,6 @@ jobs:
     name: Windows x64 release
     runs-on: windows-latest
     timeout-minutes: 180
-    env:
-      CARGO_TERM_COLOR: always
-      # Reduce peak RAM a bit on the linker; Windows runners have ~16GB.
-      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,12 +30,16 @@ jobs:
           version: "29.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify protoc
-        shell: bash
+      - name: Prefer system protoc on Windows
+        shell: pwsh
         run: |
+          if (Test-Path bin/protoc) {
+            Move-Item bin/protoc bin/protoc.unix-dotslash -Force
+          }
+          $protoc = (Get-Command protoc).Source
+          Write-Host "PROTOC=$protoc"
           protoc --version
-          which protoc
-          echo "PROTOC=$(which protoc)" >> "$GITHUB_ENV"
+          "PROTOC=$protoc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -50,43 +49,64 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ". -> target"
-          shared-key: windows-x64-pager-bin
+          workspaces: "."
+          shared-key: "win-pager-bin-v6-nodebug"
 
-      - name: Build xai-grok-pager-bin (release)
-        shell: bash
+      - name: Disable MSVC PDB (avoid LNK4319)
+        shell: pwsh
         run: |
-          set -euxo pipefail
-          export PROTOC="$(which protoc)"
+          # Override target rustflags so link.exe never opens a PDB
+          # (rustc still injects /DEBUG + .natvis by default on msvc).
+          $cfg = @'
+
+          [target.x86_64-pc-windows-msvc]
+          rustflags = [
+              "-C", "force-unwind-tables=yes",
+              "-C", "target-feature=+crt-static",
+              "-C", "debuginfo=0",
+              "-C", "link-arg=/DEBUG:NONE",
+          ]
+          '@
+          $path = ".cargo/config.toml"
+          $text = Get-Content $path -Raw
+          $text = $text -replace '(?s)\[target\.x86_64-pc-windows-msvc\]\r?\nrustflags = \[[^\]]*\]', ''
+          $text = $text.TrimEnd() + "`n" + $cfg + "`n"
+          Set-Content -Path $path -Value $text -Encoding utf8
+          Write-Host "--- .cargo/config.toml (tail) ---"
+          Get-Content $path | Select-Object -Last 20
+
+      - name: Build release binary
+        shell: pwsh
+        env:
+          CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+        run: |
+          Write-Host "Using PROTOC=$env:PROTOC"
+          if (-not $env:PROTOC) { throw "PROTOC not set" }
           cargo build -p xai-grok-pager-bin --release
+          if (-not (Test-Path target/release/xai-grok-pager.exe)) {
+            throw "xai-grok-pager.exe missing after build"
+          }
+          Get-Item target/release/xai-grok-pager.exe | Format-List Name,Length,FullName
+          Copy-Item target/release/xai-grok-pager.exe target/release/grok.exe -Force
+          @"
+          source_rev=$((Get-Content SOURCE_REV -ErrorAction SilentlyContinue) -join '')
+          git_sha=$env:GITHUB_SHA
+          built_at=$((Get-Date).ToUniversalTime().ToString('o'))
+          package=xai-grok-pager-bin
+          fix=paste-payload-offload (PR #2)
+          "@ | Set-Content target/release/BUILD_INFO.txt
 
-      - name: Stage artifact
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p dist
-          # Cargo names the bin xai-grok-pager.exe; ship as grok.exe for users.
-          cp target/release/xai-grok-pager.exe dist/grok.exe
-          cp target/release/xai-grok-pager.exe dist/xai-grok-pager.exe
-          # Build metadata
-          {
-            echo "product=grok"
-            echo "commit=$(git rev-parse HEAD)"
-            echo "source_rev=$(cat SOURCE_REV 2>/dev/null || true)"
-            echo "package=xai-grok-pager-bin"
-            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "runner=windows-latest"
-            echo "profile=release"
-            echo "paste_fix=paste-payload-offload"
-          } > dist/BUILD_INFO.txt
-          (cd dist && sha256sum grok.exe xai-grok-pager.exe > SHA256SUMS.txt) || \
-            (cd dist && certutil -hashfile grok.exe SHA256)
-          ls -lah dist/
-
-      - name: Upload Windows artifact
+      - name: Upload grok.exe
         uses: actions/upload-artifact@v4
         with:
-          name: grok-windows-x64
-          path: dist/
+          name: grok-windows-x64-paste-fix
+          path: |
+            target/release/grok.exe
+            target/release/xai-grok-pager.exe
+            target/release/BUILD_INFO.txt
           if-no-files-found: error
           retention-days: 30
