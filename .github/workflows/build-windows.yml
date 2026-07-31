@@ -33,7 +33,6 @@ jobs:
       - name: Prefer system protoc on Windows
         shell: pwsh
         run: |
-          # Hide Unix dotslash wrapper
           if (Test-Path bin/protoc) {
             Move-Item bin/protoc bin/protoc.unix-dotslash -Force
           }
@@ -51,13 +50,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          shared-key: "win-pager-bin-v3"
+          shared-key: "win-pager-bin-v4-nodebug"
 
       - name: Build release binary
         shell: pwsh
         env:
           CARGO_TERM_COLOR: always
           RUST_BACKTRACE: "1"
+          # Avoid MSVC LNK4319 PDB limit on this huge binary
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          RUSTFLAGS: "-C debuginfo=0 -C force-unwind-tables=yes -C target-feature=+crt-static"
         run: |
           Write-Host "Using PROTOC=$env:PROTOC"
           if (-not $env:PROTOC) { throw "PROTOC not set" }
