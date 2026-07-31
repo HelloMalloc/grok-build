@@ -1,8 +1,5 @@
 name: Build Windows CLI (paste-fix)
 
-# Builds xai-grok-pager → grok.exe from this tree (includes paste payload offload).
-# Windows runners have 16GB RAM — enough for xai-grok-shell.
-
 on:
   workflow_dispatch:
   push:
@@ -34,16 +31,16 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prefer system protoc on Windows
-        shell: bash
+        shell: pwsh
         run: |
-          # bin/protoc is a Unix dotslash wrapper — not a Win32 app.
-          if [ -f bin/protoc ]; then
-            mv bin/protoc bin/protoc.unix-dotslash
-          fi
-          export PROTOC="$(command -v protoc)"
-          echo "PROTOC=$PROTOC" >> "$GITHUB_ENV"
+          # Hide Unix dotslash wrapper
+          if (Test-Path bin/protoc) {
+            Move-Item bin/protoc bin/protoc.unix-dotslash -Force
+          }
+          $protoc = (Get-Command protoc).Source
+          Write-Host "PROTOC=$protoc"
           protoc --version
-          echo "Using PROTOC=$PROTOC"
+          "PROTOC=$protoc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -54,27 +51,26 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          shared-key: "win-pager-bin-v2"
+          shared-key: "win-pager-bin-v3"
 
       - name: Build release binary
-        shell: bash
+        shell: pwsh
         env:
           CARGO_TERM_COLOR: always
+          RUST_BACKTRACE: "1"
         run: |
-          set -euo pipefail
-          export PROTOC="${PROTOC:-$(command -v protoc)}"
-          echo "Using PROTOC=$PROTOC"
+          Write-Host "Using PROTOC=$env:PROTOC"
+          if (-not $env:PROTOC) { throw "PROTOC not set" }
           cargo build -p xai-grok-pager-bin --release
-          ls -lah target/release/xai-grok-pager.exe
-          # Official installs ship as "grok"
-          cp target/release/xai-grok-pager.exe target/release/grok.exe
-          {
-            echo "source_rev=$(cat SOURCE_REV 2>/dev/null || echo unknown)"
-            echo "git_sha=${GITHUB_SHA}"
-            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "package=xai-grok-pager-bin"
-            echo "fix=paste-payload-offload (PR #2)"
-          } > target/release/BUILD_INFO.txt
+          Get-Item target/release/xai-grok-pager.exe | Format-List Name,Length,FullName
+          Copy-Item target/release/xai-grok-pager.exe target/release/grok.exe
+          @"
+          source_rev=$((Get-Content SOURCE_REV -ErrorAction SilentlyContinue) -join '')
+          git_sha=$env:GITHUB_SHA
+          built_at=$((Get-Date).ToUniversalTime().ToString('o'))
+          package=xai-grok-pager-bin
+          fix=paste-payload-offload (PR #2)
+          "@ | Set-Content target/release/BUILD_INFO.txt
 
       - name: Upload grok.exe
         uses: actions/upload-artifact@v4

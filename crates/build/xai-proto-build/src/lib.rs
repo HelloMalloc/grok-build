@@ -109,6 +109,24 @@ impl XaiProtoBuilder {
     ) -> anyhow::Result<()> {
         let includes = Vec::from_iter(includes);
 
+        // Windows CI: skip protoc --dependency_out (path syntax is fragile on Win32).
+        // Still invalidate when the input protos change.
+        if cfg!(windows) {
+            for proto in protos {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    proto.to_str().context("proto path not UTF-8")?
+                );
+            }
+            if let Some(protoc) = protoc {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    protoc.to_str().context("protoc path not UTF-8")?
+                );
+            }
+            return Ok(());
+        }
+
         if let Some(protoc) = protoc {
             println!(
                 "cargo:rerun-if-changed={}",
