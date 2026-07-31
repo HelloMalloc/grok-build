@@ -10694,7 +10694,7 @@ pub(crate) mod tests {
                     chip_elements: Vec::new(),
                     image_counter: 0,
                     image_undo_stash: Vec::new(),
-                };
+        };
                 let view = crate::views::plan_approval_view::PlanApprovalViewState::new(
                     request,
                     stashed,

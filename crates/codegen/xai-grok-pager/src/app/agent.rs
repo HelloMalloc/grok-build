@@ -755,6 +755,10 @@ pub struct ChipElement {
     pub range: std::ops::Range<usize>,
     pub kind: xai_ratatui_textarea::ElementKind,
     pub display: Option<ratatui::text::Line<'static>>,
+    /// Offloaded paste body for `KIND_PASTE` chips. When `Some`, the buffer
+    /// range holds only the short chip label; expand this on send/peek.
+    /// `None` means legacy chips where the buffer range *is* the full payload.
+    pub paste_payload: Option<String>,
 }
 impl AgentSession {
     /// Whether YOLO mode is active. Prefer this over direct field access.
@@ -1010,6 +1014,7 @@ impl AgentSession {
                     range: (c.range.start + shift)..(c.range.end + shift),
                     kind: c.kind,
                     display: c.display,
+                    paste_payload: c.paste_payload,
                 }));
             merged.wire_blocks = None;
             merged.display_as_skill = false;
@@ -1440,6 +1445,7 @@ mod tests {
                 range: 5..15,
                 kind: crate::views::prompt_widget::KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             }],
         });
         let queued = session.dequeue_prompt().unwrap();
@@ -1676,6 +1682,7 @@ mod tests {
                 range: 0..5,
                 kind: crate::views::prompt_widget::KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             }],
             ..QueuedPrompt::plain(id0, "first", QueueEntryKind::Prompt)
         });
@@ -1686,6 +1693,7 @@ mod tests {
                 range: 2..6,
                 kind: crate::views::prompt_widget::KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             }],
             ..QueuedPrompt::plain(id1, "second!", QueueEntryKind::Prompt)
         });

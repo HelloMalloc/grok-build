@@ -70,7 +70,7 @@ impl AgentView {
         let slash_active = snap.active;
         let has_inline_ghost = snap.inline_ghost.is_some();
         // Copy text before passing to text_changed to satisfy the borrow checker.
-        let text = self.prompt.text().to_owned();
+        let text = self.prompt.text_expanded().into_owned();
         let action = self
             .prompt
             .suggestions

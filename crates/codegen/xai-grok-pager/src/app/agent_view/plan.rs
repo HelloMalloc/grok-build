@@ -371,7 +371,7 @@ impl AgentView {
                 if is_commenting {
                     return self.save_plan_comment();
                 }
-                let text = self.prompt.text().to_string();
+                let text = self.prompt.text_expanded().into_owned();
                 let has_comments = self
                     .plan_approval_view
                     .as_ref()
@@ -454,7 +454,7 @@ impl AgentView {
         InputOutcome::Changed
     }
     fn save_plan_comment(&mut self) -> InputOutcome {
-        let text = self.prompt.text().to_string();
+        let text = self.prompt.text_expanded().into_owned();
         if text.trim().is_empty() {
             return InputOutcome::Changed;
         }
@@ -568,7 +568,7 @@ impl AgentView {
     }
     /// Save the current casual comment (new or edited) and rebuild the viewer.
     pub(super) fn save_casual_plan_comment(&mut self) -> InputOutcome {
-        let text = self.prompt.text().to_owned();
+        let text = self.prompt.text_expanded().into_owned();
         if text.trim().is_empty() {
             return self.cancel_casual_plan_commenting();
         }
@@ -910,7 +910,7 @@ mod plan_approval_enter_tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
             tx,
         );
         pav.focus = PlanApprovalFocus::Prompt;

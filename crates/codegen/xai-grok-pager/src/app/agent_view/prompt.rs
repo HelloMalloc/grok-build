@@ -447,7 +447,7 @@ impl AgentView {
             && self.prompt_input_mode == PromptInputMode::Normal
         {
             let history = self.combined_prompt_history();
-            let current_text = self.prompt.text().to_string();
+            let current_text = self.prompt.text_expanded().into_owned();
             // Without a matcher thread the panel can never populate, and filling
             // the composer would only be undone by the next Down/Enter.
             if !history.is_empty() && self.prompt.history_search.is_available() {
@@ -626,7 +626,7 @@ impl AgentView {
                     // 2) Empty composer + a visible follow-up in the queue →
                     //    same as bare Enter: send the top row now.
                     // 3) Idle / nothing to send → no-op (not send-like-Enter).
-                    let text = self.prompt.text().trim().to_string();
+                    let text = self.prompt.text_expanded().trim().to_string();
                     let turn_running = self.session.state.is_turn_running();
                     if !text.is_empty() {
                         if !turn_running {

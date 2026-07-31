@@ -243,11 +243,11 @@ impl AgentView {
     pub(crate) fn build_deferred_send_action(&mut self, kind: AgentDeferredSend) -> Option<Action> {
         match kind {
             AgentDeferredSend::SendPrompt => {
-                let text = self.prompt.text().to_string();
+                let text = self.prompt.text_expanded().into_owned();
                 (!text.trim().is_empty()).then_some(Action::SendPrompt(text))
             }
             AgentDeferredSend::Interject => {
-                let text = self.prompt.text().trim().to_string();
+                let text = self.prompt.text_expanded().trim().to_string();
                 if !ActionRegistry::interjection_possible(
                     self.session.state.is_turn_running(),
                     !text.is_empty(),
@@ -535,7 +535,7 @@ pub(super) mod paste_key_tests {
         let text = "line1\nline2\nline3\nline4";
         let outcome = paste_cmd_v(&mut agent, Some(text));
         assert!(matches!(outcome, InputOutcome::Changed));
-        assert_eq!(agent.prompt.text(), text);
+        assert_eq!(agent.prompt.text_expanded().as_ref(), text);
         assert_eq!(agent.prompt.textarea().elements().len(), 1);
         assert_eq!(agent.prompt.textarea().elements()[0].kind, KIND_PASTE);
     }
@@ -626,7 +626,7 @@ pub(super) mod paste_key_tests {
         agent.set_active_pane(ActivePane::Prompt, true);
         let outcome = paste_cmd_v(&mut agent, Some("a\rb\rc"));
         assert!(matches!(outcome, InputOutcome::Changed));
-        assert_eq!(agent.prompt.text(), "a\nb\nc");
+        assert_eq!(agent.prompt.text_expanded().as_ref(), "a\nb\nc");
     }
     #[test]
     fn paste_key_tabs_expanded_to_spaces() {
@@ -1204,7 +1204,7 @@ pub(super) mod paste_key_tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
             tx,
         )
     }
@@ -1234,7 +1234,7 @@ pub(super) mod paste_key_tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
         );
         state.focus = crate::views::question_view::QuestionFocus::InputMode;
         state

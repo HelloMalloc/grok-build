@@ -182,7 +182,7 @@ pub(super) fn dispatch_send_prompt(app: &mut AppView, text: String) -> Vec<Effec
 /// Clear the active prompt and record non-empty text in prompt history (Esc Esc).
 pub(super) fn dispatch_clear_prompt(app: &mut AppView) -> Vec<Effect> {
     with_active_agent(app, |agent| {
-        let text = agent.prompt.text().to_string();
+        let text = agent.prompt.text_expanded().into_owned();
         // Same move-to-front / cap as send / interject.
         interject::record_interject_prompt_history(agent, &text);
         // Clears chips/images via PromptWidget::set_text empty path.
@@ -1674,7 +1674,7 @@ pub(super) fn handle_suggestion_debounce_expired(
     if !agent.prompt.suggestions.on_debounce_expired(generation) {
         return vec![];
     }
-    let text = agent.prompt.text().to_owned();
+    let text = agent.prompt.text_expanded().into_owned();
     let cursor = agent.prompt.cursor();
     let cwd = agent.session.cwd.to_string_lossy().into_owned();
     let include_ai = agent.prompt.suggestions.ai_enabled;

@@ -377,6 +377,7 @@ fn auth_complete_retries_stashed_prompt_from_dashboard() {
                 range: 9..19,
                 kind: crate::views::prompt_widget::KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             }],
         });
     app.active_view = ActiveView::AgentDashboard;

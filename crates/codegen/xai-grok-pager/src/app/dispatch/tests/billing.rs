@@ -78,7 +78,8 @@ fn credit_limit_retry_preserves_image_submission_state() {
             range: 6..16,
             kind: crate::views::prompt_widget::KIND_IMAGE,
             display: None,
-        }],
+                paste_payload: None,
+            }],
     };
     app.agents
         .get_mut(&AgentId(0))
