@@ -12,6 +12,7 @@ on:
       - "crates/codegen/xai-ratatui-textarea/**"
       - "crates/codegen/xai-grok-pager-bin/**"
       - "crates/codegen/xai-grok-shell/**"
+      - "crates/build/xai-proto-build/**"
       - ".github/workflows/build-windows.yml"
 
 permissions:
@@ -32,12 +33,17 @@ jobs:
           version: "29.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify protoc
+      - name: Prefer system protoc on Windows
         shell: bash
         run: |
+          # bin/protoc is a Unix dotslash wrapper — not a Win32 app.
+          if [ -f bin/protoc ]; then
+            mv bin/protoc bin/protoc.unix-dotslash
+          fi
+          export PROTOC="$(command -v protoc)"
+          echo "PROTOC=$PROTOC" >> "$GITHUB_ENV"
           protoc --version
-          which protoc
-          echo "PROTOC=$(which protoc)" >> "$GITHUB_ENV"
+          echo "Using PROTOC=$PROTOC"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -48,7 +54,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "."
-          shared-key: "win-pager-bin"
+          shared-key: "win-pager-bin-v2"
 
       - name: Build release binary
         shell: bash
@@ -56,13 +62,12 @@ jobs:
           CARGO_TERM_COLOR: always
         run: |
           set -euo pipefail
-          export PROTOC="$(command -v protoc)"
+          export PROTOC="${PROTOC:-$(command -v protoc)}"
           echo "Using PROTOC=$PROTOC"
           cargo build -p xai-grok-pager-bin --release
           ls -lah target/release/xai-grok-pager.exe
           # Official installs ship as "grok"
           cp target/release/xai-grok-pager.exe target/release/grok.exe
-          # Metadata
           {
             echo "source_rev=$(cat SOURCE_REV 2>/dev/null || echo unknown)"
             echo "git_sha=${GITHUB_SHA}"
