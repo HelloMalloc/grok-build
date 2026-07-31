@@ -758,7 +758,10 @@
             PromptEvent::Edited
         );
         let normalized = "line1\nline2\nline3\nline4";
-        assert_eq!(pw.textarea.text(), normalized);
+        // Buffer holds chip label only; full body is offloaded.
+        assert_ne!(pw.textarea.text(), normalized);
+        assert!(pw.textarea.text().contains("Pasted:"), "chip label in buffer: {:?}", pw.textarea.text());
+        assert_eq!(pw.text_expanded().as_ref(), normalized);
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
     }
@@ -768,7 +771,9 @@
         let mut pw = PromptWidget::new();
         let text = "line1\nline2\nline3\nline4";
         assert_eq!(pw.handle_paste(text), PromptEvent::Edited);
-        assert_eq!(pw.textarea.text(), text);
+        assert_ne!(pw.textarea.text(), text, "buffer must not hold full multi-line paste");
+        assert!(pw.textarea.text().contains("Pasted:"));
+        assert_eq!(pw.text_expanded().as_ref(), text);
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
     }
@@ -782,6 +787,12 @@
         assert_eq!(pw.handle_paste(&text), PromptEvent::Edited);
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
+        assert!(
+            pw.textarea.text().len() < 64,
+            "buffer must hold chip label only, got len {}",
+            pw.textarea.text().len()
+        );
+        assert_eq!(pw.text_expanded().as_ref(), text);
     }
 
     #[test]
@@ -1202,7 +1213,7 @@
             Some(ElementInteraction::Inlined)
         );
         assert!(pw.textarea.elements().is_empty());
-        // Text is still there
+        // Full payload restored as plain buffer text after expand.
         assert_eq!(pw.textarea.text(), text);
     }
 
@@ -1268,7 +1279,10 @@
         assert!(pw.textarea.undo());
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
-        assert_eq!(pw.textarea.text(), text);
+        // Buffer holds chip label; full body is on host_payload (undo-safe).
+        assert_ne!(pw.textarea.text(), text);
+        assert_eq!(pw.text_expanded().as_ref(), text);
+        assert!(pw.textarea.elements()[0].host_payload.as_deref() == Some(text));
     }
 
     #[test]
@@ -1872,7 +1886,9 @@
     fn paste_4_lines_creates_chip_normal_mode() {
         let mut pw = PromptWidget::new();
         pw.handle_paste("a\nb\nc\nd");
-        assert_eq!(pw.textarea.text(), "a\nb\nc\nd");
+        assert_ne!(pw.textarea.text(), "a\nb\nc\nd");
+        assert!(pw.textarea.text().contains("Pasted:"));
+        assert_eq!(pw.text_expanded().as_ref(), "a\nb\nc\nd");
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
     }
@@ -1891,7 +1907,9 @@
         let mut pw = PromptWidget::new();
         pw.set_compact(true);
         pw.handle_paste("a\nb");
-        assert_eq!(pw.textarea.text(), "a\nb");
+        assert_ne!(pw.textarea.text(), "a\nb");
+        assert!(pw.textarea.text().contains("Pasted:"));
+        assert_eq!(pw.text_expanded().as_ref(), "a\nb");
         assert_eq!(pw.textarea.elements().len(), 1);
         assert_eq!(pw.textarea.elements()[0].kind, KIND_PASTE);
     }
@@ -2341,12 +2359,14 @@
             range: 0..10,
             kind: KIND_IMAGE,
             display: None,
-        };
+                paste_payload: None,
+            };
         let chip_b = ChipElement {
             range: 11..21,
             kind: KIND_IMAGE,
             display: None,
-        };
+                paste_payload: None,
+            };
         pw.restore_chip_elements(&[chip_a, chip_b]);
 
         // Two distinct elements registered.
@@ -2430,6 +2450,7 @@
                 range: start..end,
                 kind: KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             });
         }
         pw.set_text(&text);
@@ -2586,6 +2607,7 @@
                 range: e.range.clone(),
                 kind: e.kind,
                 display: e.display.clone(),
+                paste_payload: None,
             })
             .collect();
 

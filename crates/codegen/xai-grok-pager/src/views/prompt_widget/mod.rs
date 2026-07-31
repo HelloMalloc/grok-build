@@ -17,6 +17,7 @@
 //!
 //! The accent line (┃) and selection box are rendered by the caller.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -45,7 +46,9 @@ pub const KIND_FILE_REF: ElementKind = ElementKind(2);
 /// Element kind tag for pasted image chips (`[Image #N]`).
 pub const KIND_IMAGE: ElementKind = ElementKind(3);
 
-/// Byte size at which a single-line paste is chipped (display only — not an offload threshold).
+/// Byte size at which a single-line paste is chipped **and** offloaded from the
+/// editable buffer (buffer holds only the chip label; full body lives in
+/// `TextElement::host_payload`).
 const PASTE_CHIP_DISPLAY_BYTES: usize = 10_000;
 
 pub use crate::prompt_images::PROMPT_IMAGES_TRACING_TARGET;
@@ -428,10 +431,12 @@ impl StashedPrompt {
         Vec<PastedImage>,
         Vec<crate::app::agent::ChipElement>,
     ) {
+        let chips = std::mem::take(&mut self.chip_elements);
+        let text = expand_paste_payloads_in_text(&self.text, &chips);
         (
-            std::mem::take(&mut self.text),
+            text,
             std::mem::take(&mut self.images),
-            std::mem::take(&mut self.chip_elements),
+            chips,
         )
     }
 
@@ -474,6 +479,9 @@ impl StashedPrompt {
         self.text = text;
         self.cursor = self.text.len();
         self.image_counter = images_high_water(&self.images);
+        // ElementIds from the previous live buffer are invalid after a range
+        // rewrite; payloads stay on `chip_elements[].paste_payload` and are
+        // re-bound on restore.
         self
     }
 }
@@ -535,6 +543,7 @@ pub struct PromptWidget {
     /// Monotonic counter for image display numbering (1-based). Reset on
     /// prompt clear. Only increases within a single prompt lifetime.
     pub image_counter: usize,
+
 
     /// Compact mode lowers the paste-chip threshold from 4 lines to 2.
     compact: bool,
@@ -889,9 +898,40 @@ impl PromptWidget {
         }
     }
 
-    /// Get the current text.
+    /// Get the current **buffer** text.
+    ///
+    /// For paste chips this is the short label only (e.g. `[Pasted: 12 lines]`).
+    /// Use [`Self::text_expanded`] when the full paste payloads are required
+    /// (submit, freeform slots, deferred send).
     pub fn text(&self) -> &str {
         self.textarea.text()
+    }
+
+    /// Full prompt text with paste chips expanded to their original payloads.
+    ///
+    /// When no paste payloads are offloaded this is a borrow of the buffer.
+    pub fn text_expanded(&self) -> Cow<'_, str> {
+        let text = self.textarea.text();
+        let mut out = String::with_capacity(text.len());
+        let mut prev = 0usize;
+        let mut expanded_any = false;
+        for elem in self.textarea.elements() {
+            if elem.kind != KIND_PASTE {
+                continue;
+            }
+            let Some(payload) = elem.host_payload.as_deref() else {
+                continue;
+            };
+            out.push_str(&text[prev..elem.range.start]);
+            out.push_str(payload);
+            prev = elem.range.end;
+            expanded_any = true;
+        }
+        if !expanded_any {
+            return Cow::Borrowed(text);
+        }
+        out.push_str(&text[prev..]);
+        Cow::Owned(out)
     }
 
     /// Get the current cursor position (byte offset into text).
@@ -922,6 +962,7 @@ impl PromptWidget {
                 range: element.range.clone(),
                 kind: element.kind,
                 display: element.display.clone(),
+                paste_payload: element.host_payload.clone(),
             })
             .collect();
         let images = self.drain_images();
@@ -1019,8 +1060,16 @@ impl PromptWidget {
     /// intact when a surface reloads an unchanged draft (the question view's
     /// freeform slots); any real content change takes the normal reset path.
     pub fn set_text_preserving(&mut self, text: &str) {
-        if self.text() != text {
-            self.set_text(text);
+        // Compare against expanded text so freeform slots that store the full
+        // paste payload do not wipe live chips on a no-op reload.
+        if self.text_expanded() == text {
+            return;
+        }
+        // Re-chip multi-line / large content via handle_paste so the buffer
+        // never holds a multi-thousand-line dump as plain text.
+        self.set_text("");
+        if !text.is_empty() {
+            let _ = self.handle_paste(text);
         }
     }
 
@@ -1787,6 +1836,8 @@ impl PromptWidget {
         self.textarea.input(*key);
         let new_cursor = self.textarea.cursor();
         let changed = self.textarea.text() != old_text || new_cursor != old_cursor;
+        if changed {
+        }
         self.last_input_delta = crate::input_log::LastInputDelta {
             cursor_before: Some(old_cursor),
             cursor_after: Some(new_cursor),
@@ -2265,18 +2316,30 @@ impl PromptWidget {
         // original insertion applied (normalize_cr above + the textarea's
         // tab expansion) — e.g. a trailing-newline difference is a
         // different paste and takes the normal path below.
+        // Offloaded chips compare against the side-table payload, not the
+        // short label sitting in the buffer.
         if !replacing_selection
             && let Some(elem) = self.paste_element_near_cursor()
-            && self.textarea.text()[elem.range.clone()] == *self.textarea.expand_tabs(text)
         {
-            let id = elem.id;
-            self.expand_element(id);
-            return PromptEvent::Edited;
+            let expanded = self.textarea.expand_tabs(text);
+            let matches_payload = elem
+                .host_payload
+                .as_deref()
+                .map(|p| p == expanded.as_ref())
+                .unwrap_or_else(|| {
+                    self.textarea.text()[elem.range.clone()] == *expanded
+                });
+            if matches_payload {
+                let id = elem.id;
+                self.expand_element(id);
+                return PromptEvent::Edited;
+            }
         }
 
         if replacing_selection {
             self.textarea.begin_undo_group();
             self.textarea.delete_selection();
+            // Selection delete may remove paste chips — drop orphan payloads.
         }
 
         // Count actual content lines. `.lines()` treats a trailing newline as
@@ -2288,6 +2351,10 @@ impl PromptWidget {
         // size. The label prefers size for large pastes (a 1 MB paste reads
         // better as "1.0 MB" than "N lines", regardless of line count); smaller
         // multi-line pastes keep the line count.
+        //
+        // **Offload**: the buffer only stores the short chip label; the full
+        // body goes into `paste_payloads`. Without this, a 1 MB paste still
+        // freezes the TUI (String reallocation + wrap/undo of the full body).
         let by_lines = line_count >= chip_min_lines;
         let by_bytes = text.len() > PASTE_CHIP_DISPLAY_BYTES;
         if by_lines || by_bytes {
@@ -2296,8 +2363,13 @@ impl PromptWidget {
             } else {
                 paste_chip_display(line_count)
             };
-            self.textarea
-                .insert_element(text, KIND_PASTE, Some(display));
+            let label = line_plain_text(&display);
+            let _id = self.textarea.insert_element_with_payload(
+                &label,
+                KIND_PASTE,
+                Some(display),
+                Some(text.to_owned()),
+            );
         } else {
             self.textarea.insert_str(text);
         }
@@ -2726,6 +2798,22 @@ impl PromptWidget {
                 .iter()
                 .map(|e| (e.range.clone(), e.kind, e.display.clone())),
         );
+        // `restore_elements` mints fresh ElementIds — rebind offloaded payloads
+        // by KIND_PASTE order (stable with the elems slice).
+        let mut payload_iter = elems.iter().filter(|e| e.kind == KIND_PASTE);
+        let rebind: Vec<(ElementId, Option<String>)> = self
+            .textarea
+            .elements()
+            .iter()
+            .filter(|e| e.kind == KIND_PASTE)
+            .map(|e| {
+                let payload = payload_iter.next().and_then(|c| c.paste_payload.clone());
+                (e.id, payload)
+            })
+            .collect();
+        for (id, payload) in rebind {
+            self.textarea.set_element_host_payload(id, payload);
+        }
     }
 
     /// Expose the underlying textarea for element access.
@@ -2733,9 +2821,16 @@ impl PromptWidget {
         &self.textarea
     }
 
-    /// Buffer text of `elem` if it is a paste chip (`KIND_PASTE`).
-    fn paste_text(&self, elem: &TextElement) -> Option<&str> {
-        (elem.kind == KIND_PASTE).then(|| &self.textarea.text()[elem.range.clone()])
+    /// Full paste body for `elem` if it is a paste chip (`KIND_PASTE`).
+    /// Prefers the offloaded payload; falls back to buffer text (legacy).
+    fn paste_text<'a>(&'a self, elem: &'a TextElement) -> Option<&'a str> {
+        if elem.kind != KIND_PASTE {
+            return None;
+        }
+        if let Some(p) = elem.host_payload.as_deref() {
+            return Some(p);
+        }
+        Some(&self.textarea.text()[elem.range.clone()])
     }
 
     /// Check if the cursor is currently on a paste element (strict on-chip
@@ -2804,6 +2899,21 @@ impl PromptWidget {
     /// @-completion context. A single undoable step (see
     /// [`TextArea::inline_element`]).
     fn expand_element(&mut self, id: ElementId) {
+        // Offloaded paste: buffer holds only the chip label — replace it with
+        // the full payload as plain text, then drop the element metadata.
+        // Grouped into one undo step so a single Undo restores the chip.
+        if let Some(elem) = self.textarea.elements().iter().find(|e| e.id == id).cloned() {
+            if let Some(payload) = elem.host_payload.clone() {
+                let start = elem.range.start;
+                let end = elem.range.end;
+                self.textarea.begin_undo_group();
+                let _ = self.textarea.inline_element(id);
+                self.textarea.replace_range(start..end, &payload);
+                self.textarea.end_undo_group();
+                self.update_file_search_context();
+                return;
+            }
+        }
         self.textarea.inline_element(id);
         self.update_file_search_context();
     }
@@ -3680,6 +3790,45 @@ fn normalize_cr(text: &str) -> String {
         }
     }
     s
+}
+
+/// Flatten a ratatui `Line` into plain text (for buffer-side chip labels).
+fn line_plain_text(line: &Line<'_>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+/// Expand paste chip labels in `text` using payloads stored on `chips`.
+/// Used by [`StashedPrompt::into_submission`] so send/rewind get full bodies.
+fn expand_paste_payloads_in_text(
+    text: &str,
+    chips: &[crate::app::agent::ChipElement],
+) -> String {
+    let mut paste_chips: Vec<&crate::app::agent::ChipElement> = chips
+        .iter()
+        .filter(|c| c.kind == KIND_PASTE && c.paste_payload.is_some())
+        .collect();
+    if paste_chips.is_empty() {
+        return text.to_owned();
+    }
+    paste_chips.sort_by_key(|c| c.range.start);
+    let mut out = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    for c in paste_chips {
+        let start = c.range.start.min(text.len());
+        let end = c.range.end.min(text.len());
+        if start < prev || start > text.len() {
+            continue;
+        }
+        out.push_str(&text[prev..start]);
+        if let Some(payload) = c.paste_payload.as_deref() {
+            out.push_str(payload);
+        } else {
+            out.push_str(&text[start..end]);
+        }
+        prev = end;
+    }
+    out.push_str(&text[prev..]);
+    out
 }
 
 /// Build the styled display `Line` for a paste element chip.

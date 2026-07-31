@@ -89,3 +89,15 @@ docs/examples/long-paste-collapse-web/
 - Companion sandbox demo was previously staged at
   `HelloMalloc/cli-session-long-paste` (PR #1); **this repo is the intended
   home for the change record.**
+
+## Implementation update (2026-07-31)
+
+TUI paste chips now **offload** the full body out of the editable buffer:
+
+- Buffer stores only the short label (`[Pasted: N lines]` / size label)
+- Full payload lives in `PromptWidget::paste_payloads` (keyed by `ElementId`)
+- `text_expanded()` / `StashedPrompt::into_submission` expand on send
+- Freeform reload uses `set_text_preserving` → re-chip via `handle_paste`
+
+This closes the remaining freeze path where chips were display-only and the
+full multi-MB string still lived in the `String` buffer (undo/wrap/alloc).

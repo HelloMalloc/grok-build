@@ -150,6 +150,17 @@ impl XaiProtoBuilder {
             let output =
                 String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
 
+            // protoc ≥29 with `--descriptor_set_out=/dev/null` often yields empty
+            // `--dependency_out=/dev/stdout`. Fall back to tracking just the
+            // input proto so local builds still work.
+            if output.trim().is_empty() {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    proto.to_str().context("proto path not UTF-8")?
+                );
+                continue;
+            }
+
             let mut lines = output.lines();
             let first_line = lines.next().context("protoc command output is empty")?;
             let prefix = "/dev/null:";

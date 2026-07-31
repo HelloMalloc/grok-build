@@ -92,7 +92,7 @@ impl AgentView {
         if let PromptMode::EditingQueued { ref original, .. } = self.prompt_mode
             && target != AgentPane::Prompt
         {
-            let dirty = self.prompt.text() != original;
+            let dirty = self.prompt.text_expanded().as_ref() != original.as_str();
             if dirty {
                 // Block the switch; never arm `EditConfirm` here (it has no draw
                 // arm, so it would capture all input invisibly). Resolve with Enter/Esc.
@@ -330,7 +330,7 @@ impl AgentView {
     ) -> InputOutcome {
         match server_id {
             Some(server_id) => {
-                let new_text = self.prompt.text().to_string();
+                let new_text = self.prompt.text_expanded().into_owned();
                 // Server-origin row: route the edit through the agent (LWW); the
                 // rebroadcast updates every client's mirror, so don't mutate
                 // locally. Keep the hold until the edit lands — see
@@ -413,7 +413,7 @@ impl AgentView {
         server_id: Option<String>,
         kind: crate::app::agent::QueueEntryKind,
     ) -> InputOutcome {
-        let text = self.prompt.text().trim().to_string();
+        let text = self.prompt.text_expanded().trim().to_string();
         if text.is_empty() {
             return InputOutcome::Changed;
         }
@@ -668,7 +668,8 @@ mod tests {
             range: 10..20,
             kind: crate::views::prompt_widget::KIND_IMAGE,
             display: None,
-        }];
+                paste_payload: None,
+            }];
         agent.queue.sync_from_merged(
             &agent.session.pending_prompts,
             &agent.shared_queue,
@@ -1648,6 +1649,7 @@ mod tests {
                 range: 10..20,
                 kind: crate::views::prompt_widget::KIND_IMAGE,
                 display: None,
+                paste_payload: None,
             });
         agent.queue.sync_from_merged(
             &agent.session.pending_prompts,

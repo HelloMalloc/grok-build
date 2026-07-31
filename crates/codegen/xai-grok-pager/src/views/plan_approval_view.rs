@@ -271,7 +271,7 @@ mod tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
             tx,
         );
         (state, rx)
@@ -384,7 +384,7 @@ mod tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
             tx,
         );
         (state, rx)
@@ -425,7 +425,7 @@ mod tests {
                 chip_elements: Vec::new(),
                 image_counter: 0,
                 image_undo_stash: Vec::new(),
-            },
+        },
             tx,
         );
         assert!(!state.has_plan);

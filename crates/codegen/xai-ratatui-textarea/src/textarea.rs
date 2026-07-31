@@ -117,6 +117,10 @@ pub struct TextElement {
     /// instead of the raw buffer text. When `None`, the buffer text is rendered
     /// with a default element style (cyan).
     pub display: Option<Line<'static>>,
+    /// Optional host-owned payload (not rendered). Survives undo/redo with the
+    /// element snapshot — used e.g. for offloaded paste bodies while the buffer
+    /// range holds only a short chip label.
+    pub host_payload: Option<String>,
 }
 
 // ── Selection ──
@@ -2615,8 +2619,20 @@ impl TextArea {
         kind: ElementKind,
         display: Option<Line<'static>>,
     ) -> ElementId {
+        self.insert_element_with_payload(text, kind, display, None)
+    }
+
+    /// Like [`insert_element`], and attaches an opaque host payload that is
+    /// snapshotted with the element for undo/redo (not rendered).
+    pub fn insert_element_with_payload(
+        &mut self,
+        text: &str,
+        kind: ElementKind,
+        display: Option<Line<'static>>,
+        host_payload: Option<String>,
+    ) -> ElementId {
         let plan = self.plan_edit_replacement(self.cursor()..self.cursor(), text);
-        self.apply_element_transaction(plan, kind, display)
+        self.apply_element_transaction(plan, kind, display, host_payload)
     }
 
     /// Replace a range of buffer text with an atomic element.
@@ -2634,7 +2650,7 @@ impl TextArea {
         display: Option<Line<'static>>,
     ) -> ElementId {
         let plan = self.plan_edit_replacement(range, text);
-        self.apply_element_transaction(plan, kind, display)
+        self.apply_element_transaction(plan, kind, display, None)
     }
 
     fn apply_element_transaction(
@@ -2642,6 +2658,7 @@ impl TextArea {
         plan: EditPlan,
         kind: ElementKind,
         display: Option<Line<'static>>,
+        host_payload: Option<String>,
     ) -> ElementId {
         let start = plan.replaced_byte_range().start;
         let inserted_len = plan.replacement().len();
@@ -2649,7 +2666,7 @@ impl TextArea {
         self.pre_mutate(MutationKind::Element);
         self.apply_validated_edit_plan(plan, Some(MutationKind::Element));
         let end = start + inserted_len;
-        let id = self.add_element(start..end, kind, display);
+        let id = self.add_element(start..end, kind, display, host_payload);
         self.set_cursor(end);
         self.post_mutate();
         id
@@ -2660,6 +2677,7 @@ impl TextArea {
         range: Range<usize>,
         kind: ElementKind,
         display: Option<Line<'static>>,
+        host_payload: Option<String>,
     ) -> ElementId {
         let id = ElementId(self.next_element_id);
         self.next_element_id += 1;
@@ -2668,6 +2686,7 @@ impl TextArea {
             range,
             kind,
             display,
+            host_payload,
         };
         self.elements.push(elem);
         self.elements.sort_by_key(|e| e.range.start);
@@ -2702,6 +2721,22 @@ impl TextArea {
         }
     }
 
+    /// Attach or clear an opaque host payload on an existing element.
+    /// Does not affect rendering or wrap (payload is never displayed).
+    pub fn set_element_host_payload(&mut self, id: ElementId, host_payload: Option<String>) {
+        if let Some(e) = self.elements.iter_mut().find(|e| e.id == id) {
+            e.host_payload = host_payload;
+        }
+    }
+
+    /// Borrow the host payload for `id`, if any.
+    pub fn element_host_payload(&self, id: ElementId) -> Option<&str> {
+        self.elements
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.host_payload.as_deref())
+    }
+
     /// Returns a slice of all elements, sorted by buffer position.
     pub fn elements(&self) -> &[TextElement] {
         &self.elements
@@ -2717,7 +2752,7 @@ impl TextArea {
         elems: impl IntoIterator<Item = (Range<usize>, ElementKind, Option<Line<'static>>)>,
     ) {
         for (range, kind, display) in elems {
-            self.add_element(range, kind, display);
+            self.add_element(range, kind, display, None);
         }
         self.wrap_cache.replace(None);
     }

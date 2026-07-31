@@ -49,7 +49,7 @@ impl AgentView {
                 match self.prompt.route_enter(key) {
                     EnterOutcome::NewlineInserted => return InputOutcome::Changed,
                     EnterOutcome::Submit => {
-                        let text = self.prompt.text().to_string();
+                        let text = self.prompt.text_expanded().into_owned();
                         return InputOutcome::Action(Action::PermissionFollowup(text));
                     }
                     EnterOutcome::PassThrough => {}
@@ -240,7 +240,7 @@ impl AgentView {
                         self.prompt.file_search.clear_context();
                     } else {
                         let idx = qv.active_tab;
-                        let text = self.prompt.text().to_string();
+                        let text = self.prompt.text_expanded().into_owned();
                         let has_text = !text.trim().is_empty();
                         if let Some(slot) = qv.per_question_freeform.get_mut(idx) {
                             *slot = text;
@@ -284,7 +284,7 @@ impl AgentView {
                     EnterOutcome::NewlineInserted => return InputOutcome::Changed,
                     EnterOutcome::Submit => {
                         let idx = qv.active_tab;
-                        let text = self.prompt.text().to_string();
+                        let text = self.prompt.text_expanded().into_owned();
                         let has_text = !text.trim().is_empty();
                         if let Some(slot) = qv.per_question_freeform.get_mut(idx) {
                             *slot = text;
@@ -576,7 +576,7 @@ impl AgentView {
                         && qv.focus == crate::views::question_view::QuestionFocus::InputMode
                     {
                         let idx = qv.active_tab;
-                        let text = self.prompt.text().to_string();
+                        let text = self.prompt.text_expanded().into_owned();
                         let has_text = !text.trim().is_empty();
                         if let Some(slot) = qv.per_question_freeform.get_mut(idx) {
                             *slot = text;
@@ -681,7 +681,7 @@ impl AgentView {
                         return InputOutcome::Changed;
                     }
                     let idx = qv.active_tab;
-                    let text = self.prompt.text().to_string();
+                    let text = self.prompt.text_expanded().into_owned();
                     let has_text = !text.trim().is_empty();
                     if let Some(slot) = qv.per_question_freeform.get_mut(idx) {
                         *slot = text;
@@ -1024,7 +1024,7 @@ impl AgentView {
         };
         let old = qv.active_tab;
         if let Some(slot) = qv.per_question_freeform.get_mut(old) {
-            *slot = self.prompt.text().to_string();
+            *slot = self.prompt.text_expanded().into_owned();
         }
     }
     /// Load the freeform text for the current `active_tab` into the prompt.
@@ -1904,7 +1904,7 @@ mod question_freeform_chip_tests {
             1,
             "re-entering input mode must keep the folded chip"
         );
-        assert_eq!(agent.prompt.text(), PASTE, "buffer text must round-trip");
+        assert_eq!(agent.prompt.text_expanded().as_ref(), PASTE, "expanded text must round-trip");
     }
     /// A slot rewritten by another surface (e.g. the dashboard peek answer
     /// path) no longer matches the live draft, so re-entry must take the
